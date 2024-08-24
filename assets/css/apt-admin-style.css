@@ -1,0 +1,25 @@
+.tablenav-pages {
+    margin: 1em 0;
+}
+
+.tablenav-pages a,
+.tablenav-pages span.current {
+    padding: 5px 10px;
+    border: 1px solid #ccc;
+    margin: 0 5px;
+    text-decoration: none;
+}
+
+.tablenav-pages span.current {
+    background-color: #0073aa;
+    color: white;
+}
+
+select[name="blog_id"] {
+    margin-right: 10px;
+}
+
+.content-row td {
+    padding: 10px;
+    background-color: #f9f9f9;
+}
