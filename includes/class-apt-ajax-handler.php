@@ -112,7 +112,7 @@ class APT_Ajax_Handler
     {
         $args = array(
             'post_type' => $post_type,
-            'posts_per_page' => 3, // Get all posts
+            'posts_per_page' => -1, // Get all posts
             'post_status' => 'publish',
             'paged' => $paged
         );
@@ -156,18 +156,22 @@ class APT_Ajax_Handler
         foreach ($posts as $post) {
             $image_url = get_the_post_thumbnail_url($post->ID, 'full') ?: '';
             $post_url = get_permalink($post->ID);
-            $taxonomies = $this->get_post_taxonomies_json($post->ID, $post_type);
-            $custom_fields = $this->get_post_custom_fields_json($post->ID);
+            $taxonomies_json = self::get_post_taxonomies_json($post->ID, $post_type);
+            $taxonomies_array = json_decode($taxonomies_json, true);
+            // Extract post_type and remove it from taxonomies
+            $adjusted_post_type = isset($taxonomies_array['post_type']) ? $taxonomies_array['post_type'] : $post->post_type;
+            unset($taxonomies_array['post_type']);
 
-            print_r($custom_fields);
-            exit();
+            $taxonomies = wp_json_encode($taxonomies_array);
+            $custom_fields = self::get_post_custom_fields_json($post->ID);
+
 
             $csv_data[] = array(
                 $post_url,
                 $image_url,
                 $post->post_title,
                 $post->post_content,
-                $post_type,
+                $adjusted_post_type,
                 $taxonomies,
                 $custom_fields
             );
@@ -188,32 +192,70 @@ class APT_Ajax_Handler
         return $csv_content;
     }
 
-    private function get_post_taxonomies_json($post_id, $post_type)
+    public static function get_post_taxonomies_json($post_id, $post_type)
     {
         $taxonomies = get_object_taxonomies($post_type, 'objects');
         $taxonomy_data = array();
+        $has_people_type = false;
 
         foreach ($taxonomies as $taxonomy) {
             $terms = get_the_terms($post_id, $taxonomy->name);
             if ($terms && !is_wp_error($terms)) {
-                $taxonomy_data[$taxonomy->label] = wp_list_pluck($terms, 'name');
+                foreach ($terms as $term) {
+                    $remapped = self::remap_taxonomy($taxonomy->name, $term->name);
+                    $taxonomy_data[$remapped[0]][] = $remapped[1];
+                    if ($remapped[0] === 'people_type') {
+                        $has_people_type = true;
+                    } else if (stripos($term->name, 'Courses') !== false) {
+                        $is_course = true;
+                    } else if (stripos($term->name, 'Publications') !== false) {
+                        $is_publication = true;
+                    } else if (stripos($term->name, 'Projects') !== false) {
+                        $is_project = true;
+                    }
+                }
             }
         }
 
-        return wp_json_encode($taxonomy_data);
+        // Remove duplicates and implode values
+        foreach ($taxonomy_data as $key => $values) {
+            $taxonomy_data[$key] = implode(', ', array_unique($values));
+        }
+
+        // Set post_type based on taxonomy
+        if (@$has_people_type) {
+            $post_type = 'people';
+        } elseif (@$is_course) {
+            $post_type = 'course';
+        } elseif (@$is_publication) {
+            $post_type = 'publication';
+        } elseif (@$is_project) {
+            $post_type = 'project';
+        } else {
+            $post_type = 'page';
+        }
+
+        return wp_json_encode(array_merge(['post_type' => $post_type], $taxonomy_data));
     }
 
-
-    private function get_post_custom_fields_json($post_id)
+    public static function get_post_custom_fields_json($post_id)
     {
         $custom_fields = get_post_custom($post_id);
         $filtered_fields = array();
 
         foreach ($custom_fields as $key => $values) {
-            if (substr($key, 0, 1) !== '_') { // Exclude hidden fields
+            if (
+                reset($values)
+                && substr($key, 0, 1) !== '_'
+                && substr($key, 0, 3) !== 'kd_'
+                && substr($key, 0, 4) !== 'sbg_'
+                && substr($key, 0, 5) !== 'pyre_'
+                && substr($key, 0, 6) !== 'avada_'
+                && substr($key, 0, 7) !== 'fusion_'
+            ) {
                 $new_key = self::remap_custom_field_key($key);
                 if ($new_key) {
-                    $filtered_fields[$new_key] = self::format_custom_field_value($values, $filtered_fields[$new_key]);
+                    $filtered_fields[$new_key] = self::format_custom_field_value($values, @$filtered_fields[$new_key]);
                 }
             }
         }
@@ -221,56 +263,61 @@ class APT_Ajax_Handler
         return wp_json_encode($filtered_fields);
     }
 
+    public static function remap_taxonomy($key, $value)
+    {
+        $taxonomy_mapping = [
+            'people_type' => [
+                'Faculty' => 'Faculty',
+                'Researchers' => 'Researchers',
+                'Staff' => 'Staff',
+                'PhD Students' => 'PhD Students',
+                'Adjunct' => 'Adjunct',
+                'Advisory Board' => 'Advisory Board',
+            ],
+            'pillar-cluster' => ['SUTD', 'ASD', 'EDP', 'ESD',  'ISTD', 'HASS', 'SMT', 'DAI']
+        ];
+        // Check for people_type mapping
+        if (isset($taxonomy_mapping['people_type'][$value])) {
+            return ['people_type', $taxonomy_mapping['people_type'][$value]];
+        }
+
+        // Check for pillar-cluster mapping
+        foreach ($taxonomy_mapping['pillar-cluster'] as $pillar) {
+            if (stripos($value, $pillar) !== false) {
+                return ['pillar-cluster', $pillar];
+            }
+        }
+
+        // If no mapping found, return the original key-value pair
+        return [$key, $value];
+    }
+
     public static function remap_custom_field_key($key)
     {
-        // Add your remapping logic here
-        // For example:
-        switch ($key) {
-            case 'title':
-                return 'title';
-            case 'first_name':
-                return 'first_name';
-            case 'last_name':
-                return 'last_name';
-            case 'email':
-                return 'email';
-            case 'telephone':
-                return 'telephone';
-            case 'research':
-                return 'research';
-            case 'research_interest':
-                return 'research_interest';
-            case 'istd_research':
-                return 'istd_research';
-            case 'epd_research':
-                return 'epd_research';
-            case 'designation':
-                return 'designation';
-            case 'company':
-                return 'company';
-            case 'company_links':
-                return 'company_links';
-            case 'company_designation':
-                return 'company_designation';
-            case 'website':
-                return 'website';
-            case 'qualification':
-                return 'qualification';
-            case 'room_number':
-                return 'room_number';
-            case 'position':
-                return 'position';
-            case 'school':
-                return 'school';
-            case 'university':
-                return 'university';
-            case 'research-methods':
-                return 'research-methods';
-            case 'research-applications':
-                return 'research-applications';
-            default:
-                return false;
-        }
+        $custom_field_mapping = array(
+            'title' => 'title',
+            'first_name' => 'first_name',
+            'last_name' => 'last_name',
+            'email' => 'email',
+            'telephone' => 'telephone',
+            'research' => 'research',
+            'research_interest' => 'research_interest',
+            'research-methods' => 'research-methods',
+            'research-applications' => 'research-applications',
+            'istd_research' => 'istd_research',
+            'epd_research' => 'epd_research',
+            'designation' => 'designation',
+            'company' => 'company',
+            'company_links' => 'company_links',
+            'company_designation' => 'company_designation',
+            'website' => 'website',
+            'qualification' => 'qualification',
+            'room_number' => 'room_number',
+            'position' => 'position',
+            'school' => 'school',
+            'university' => 'university',
+        );
+        return isset($custom_field_mapping[$key]) ? $custom_field_mapping[$key] : $key;
     }
 
     public static function format_custom_field_value($value, $field_data = [])
@@ -285,9 +332,8 @@ class APT_Ajax_Handler
             // $unserialized_value = array_merge($field_data, $unserialized_value);
             // return wp_json_encode($unserialized_value);
             return $unserialized_value;
-        }else{
+        } else {
             return $unserialized_value;
         }
-
     }
 }

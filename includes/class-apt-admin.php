@@ -34,11 +34,26 @@ class APT_Admin
         ));
     }
 
+
+    private function get_custom_fields($post_type)
+    {
+        global $wpdb;
+        $query = "
+            SELECT DISTINCT meta_key
+            FROM $wpdb->postmeta pm
+            JOIN $wpdb->posts p ON p.ID = pm.post_id
+            WHERE p.post_type = %s
+            AND pm.meta_key NOT LIKE '\_%'
+        ";
+        $results = $wpdb->get_col($wpdb->prepare($query, $post_type));
+        return $results;
+    }
+
     public function display_data()
     {
         global $wpdb;
 
-        $posts_per_page = 3; // Number of posts to display per page
+        $posts_per_page = -1; // Number of posts to display per page
         $current_page = isset($_GET['paged']) ? max(1, intval($_GET['paged'])) : 1;
         $selected_post_type = isset($_GET['post_type']) ? sanitize_text_field($_GET['post_type']) : 'post';
         $selected_blog_id = isset($_GET['blog_id']) ? intval($_GET['blog_id']) : get_current_blog_id();
@@ -103,11 +118,20 @@ class APT_Admin
         echo '</select>';
         echo '</div>';
 
-        // Taxonomy filters
         $taxonomies = get_object_taxonomies($selected_post_type, 'objects');
         foreach ($taxonomies as $taxonomy) {
-            $terms = get_terms(array('taxonomy' => $taxonomy->name, 'hide_empty' => false));
-            if (!empty($terms)) {
+            // Check if the taxonomy is actually used by posts of this type
+            $terms = get_terms(array(
+                'taxonomy' => $taxonomy->name,
+                'hide_empty' => true,
+                'object_ids' => get_posts(array(
+                    'post_type' => $selected_post_type,
+                    'fields' => 'ids',
+                    'posts_per_page' => -1,
+                )),
+            ));
+
+            if (!empty($terms) && !is_wp_error($terms)) {
                 echo '<div style="margin-bottom: 10px;">';
                 echo '<label>' . esc_html($taxonomy->label) . ': </label>';
                 echo '<select name="taxonomy[' . esc_attr($taxonomy->name) . ']">';
@@ -234,51 +258,38 @@ class APT_Admin
 
     private function get_post_taxonomies($post_id, $post_type)
     {
-        $taxonomies = get_object_taxonomies($post_type, 'objects');
-        $output = array();
-        foreach ($taxonomies as $taxonomy) {
-            $terms = get_the_terms($post_id, $taxonomy->name);
-            if ($terms && !is_wp_error($terms)) {
-                $term_names = wp_list_pluck($terms, 'name');
-                $output[] = $taxonomy->label . ': ' . implode(', ', $term_names);
-            }
-        }
-        return implode('<br>', $output);
-    }
-
-    private function get_custom_fields($post_type)
-    {
-        global $wpdb;
-        $query = "
-            SELECT DISTINCT meta_key
-            FROM $wpdb->postmeta pm
-            JOIN $wpdb->posts p ON p.ID = pm.post_id
-            WHERE p.post_type = %s
-            AND pm.meta_key NOT LIKE '\_%'
-        ";
-        $results = $wpdb->get_col($wpdb->prepare($query, $post_type));
-        return $results;
+        $taxonomies = APT_Ajax_Handler::get_post_taxonomies_json($post_id, $post_type);
+        $taxonomies = json_decode($taxonomies, true);
+        return $this->display_listing($taxonomies);
     }
 
     private function get_post_custom_fields($post_id)
     {
-        $custom_fields = get_post_custom($post_id);
+        $custom_fields = APT_Ajax_Handler::get_post_custom_fields_json($post_id);
+        $custom_fields = json_decode($custom_fields, true);
+        return $this->display_listing($custom_fields);
+    }
+
+    private function display_listing($data)
+    {
         $output = '<ul>';
-        foreach ($custom_fields as $key => $values) {
-            if (substr($key, 0, 1) !== '_') { // Exclude hidden fields
-                $new_key = APT_Ajax_Handler::remap_custom_field_key($key);
-                if ($new_key) {
-                    $formatted_value = APT_Ajax_Handler::format_custom_field_value($values);
-                    if (is_array($formatted_value)) {
-                        $formatted_value = implode(',', $formatted_value);
-                    }
-                    $output .= '<li><strong>' . esc_html($new_key) . ':</strong> ' . esc_html($formatted_value) . '</li>';
+        foreach ($data as $key => $values) {
+            if (is_array($values)) {
+                $output .= '<li><strong>' . esc_html($key) . ':(Array)</strong><ol>';
+                foreach ($values as $value) {
+                    $output .= '<li>' . esc_html($value) . '</li>';
                 }
+                $output .= '</ol></li>';
+            } else {
+                $output .= '<li><strong>' . esc_html($key) . ':</strong> ' . esc_html($values) . '</li>';
             }
         }
         $output .= '</ul>';
         return $output;
     }
+
+
+
     private function get_featured_image($post_id)
     {
         if (has_post_thumbnail($post_id)) {
