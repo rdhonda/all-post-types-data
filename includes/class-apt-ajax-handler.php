@@ -72,12 +72,17 @@ class APT_Ajax_Handler
         ));
     }
 
+
     public function export_csv()
     {
         check_ajax_referer('apt_nonce', 'nonce');
 
         $post_type = isset($_POST['post_type']) ? sanitize_text_field($_POST['post_type']) : '';
         $blog_id = isset($_POST['blog_id']) ? intval($_POST['blog_id']) : get_current_blog_id();
+        $taxonomy_filters = isset($_POST['taxonomy_filters']) ? $_POST['taxonomy_filters'] : array();
+        $custom_field_key = isset($_POST['custom_field_key']) ? sanitize_text_field($_POST['custom_field_key']) : '';
+        $custom_field_value = isset($_POST['custom_field_value']) ? sanitize_text_field($_POST['custom_field_value']) : '';
+        $paged = isset($_POST['paged']) ? intval($_POST['paged']) : 1;
 
         if (!$post_type) {
             wp_send_json_error('Invalid post type');
@@ -87,24 +92,66 @@ class APT_Ajax_Handler
             switch_to_blog($blog_id);
         }
 
-        $csv_content = $this->generate_csv_content($post_type);
+        try {
+            $csv_content = $this->generate_csv_content($post_type, $taxonomy_filters, $custom_field_key, $custom_field_value, $paged);
 
-        if (is_multisite()) {
-            restore_current_blog();
+            if (is_multisite()) {
+                restore_current_blog();
+            }
+
+            wp_send_json_success(array('csv_content' => $csv_content));
+        } catch (Exception $e) {
+            if (is_multisite()) {
+                restore_current_blog();
+            }
+            wp_send_json_error('Error generating CSV: ' . $e->getMessage());
         }
-
-        wp_send_json_success(array('csv_content' => $csv_content));
     }
 
-    private function generate_csv_content($post_type)
+    private function generate_csv_content($post_type, $taxonomy_filters, $custom_field_key, $custom_field_value, $paged)
     {
-        $posts = get_posts(array(
+        $args = array(
             'post_type' => $post_type,
-            'numberposts' => -1,
-        ));
+            'posts_per_page' => 3, // Get all posts
+            'post_status' => 'publish',
+            'paged' => $paged
+        );
+
+        // Add taxonomy queries
+        if (!empty($taxonomy_filters)) {
+            $tax_query = array('relation' => 'AND');
+            foreach ($taxonomy_filters as $taxonomy => $term) {
+                if (!empty($term)) {
+                    $tax_query[] = array(
+                        'taxonomy' => $taxonomy,
+                        'field' => 'slug',
+                        'terms' => $term
+                    );
+                }
+            }
+            $args['tax_query'] = $tax_query;
+        }
+
+        // Add custom field query
+        if (!empty($custom_field_key) && !empty($custom_field_value)) {
+            $args['meta_query'] = array(
+                array(
+                    'key' => $custom_field_key,
+                    'value' => $custom_field_value,
+                    'compare' => 'LIKE'
+                )
+            );
+        }
+
+        $query = new WP_Query($args);
+        $posts = $query->posts;
+
+        if (empty($posts)) {
+            throw new Exception('No posts found matching the criteria.');
+        }
 
         $csv_data = array();
-        $csv_data[] = array('Image URL', 'Post URL', 'Title', 'Content', 'Taxonomies', 'Custom Fields');
+        $csv_data[] = array('URL', 'Image URL', 'Title', 'Content', 'Post Type', 'Taxonomies', 'Custom Fields');
 
         foreach ($posts as $post) {
             $image_url = get_the_post_thumbnail_url($post->ID, 'full') ?: '';
@@ -112,21 +159,32 @@ class APT_Ajax_Handler
             $taxonomies = $this->get_post_taxonomies_json($post->ID, $post_type);
             $custom_fields = $this->get_post_custom_fields_json($post->ID);
 
+            print_r($custom_fields);
+            exit();
+
             $csv_data[] = array(
-                $image_url,
                 $post_url,
+                $image_url,
                 $post->post_title,
-                $post->post_content, 
+                $post->post_content,
+                $post_type,
                 $taxonomies,
                 $custom_fields
             );
         }
 
-        $csv_content = '';
-        foreach ($csv_data as $row) {
-            $csv_content .= implode(',', array_map(array($this, 'csv_escape'), $row)) . "\n";
-        }
+        return $this->array_to_csv($csv_data);
+    }
 
+    private function array_to_csv($data)
+    {
+        $output = fopen('php://temp', 'r+');
+        foreach ($data as $row) {
+            fputcsv($output, $row);
+        }
+        rewind($output);
+        $csv_content = stream_get_contents($output);
+        fclose($output);
         return $csv_content;
     }
 
@@ -145,6 +203,7 @@ class APT_Ajax_Handler
         return wp_json_encode($taxonomy_data);
     }
 
+
     private function get_post_custom_fields_json($post_id)
     {
         $custom_fields = get_post_custom($post_id);
@@ -152,19 +211,83 @@ class APT_Ajax_Handler
 
         foreach ($custom_fields as $key => $values) {
             if (substr($key, 0, 1) !== '_') { // Exclude hidden fields
-                $filtered_fields[$key] = $values;
+                $new_key = self::remap_custom_field_key($key);
+                if ($new_key) {
+                    $filtered_fields[$new_key] = self::format_custom_field_value($values, $filtered_fields[$new_key]);
+                }
             }
         }
 
         return wp_json_encode($filtered_fields);
     }
 
-    private function csv_escape($value)
+    public static function remap_custom_field_key($key)
     {
-        if (is_array($value)) {
-            $value = implode(', ', $value);
+        // Add your remapping logic here
+        // For example:
+        switch ($key) {
+            case 'title':
+                return 'title';
+            case 'first_name':
+                return 'first_name';
+            case 'last_name':
+                return 'last_name';
+            case 'email':
+                return 'email';
+            case 'telephone':
+                return 'telephone';
+            case 'research':
+                return 'research';
+            case 'research_interest':
+                return 'research_interest';
+            case 'istd_research':
+                return 'istd_research';
+            case 'epd_research':
+                return 'epd_research';
+            case 'designation':
+                return 'designation';
+            case 'company':
+                return 'company';
+            case 'company_links':
+                return 'company_links';
+            case 'company_designation':
+                return 'company_designation';
+            case 'website':
+                return 'website';
+            case 'qualification':
+                return 'qualification';
+            case 'room_number':
+                return 'room_number';
+            case 'position':
+                return 'position';
+            case 'school':
+                return 'school';
+            case 'university':
+                return 'university';
+            case 'research-methods':
+                return 'research-methods';
+            case 'research-applications':
+                return 'research-applications';
+            default:
+                return false;
         }
-        $value = str_replace('"', '""', $value);
-        return '"' . $value . '"';
+    }
+
+    public static function format_custom_field_value($value, $field_data = [])
+    {
+        if (is_array($value) && count($value) === 1) {
+            $value = $value[0];
+        }
+
+        $unserialized_value = maybe_unserialize($value);
+
+        if (is_array($unserialized_value)) {
+            // $unserialized_value = array_merge($field_data, $unserialized_value);
+            // return wp_json_encode($unserialized_value);
+            return $unserialized_value;
+        }else{
+            return $unserialized_value;
+        }
+
     }
 }
