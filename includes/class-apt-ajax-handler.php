@@ -206,6 +206,8 @@ class APT_Ajax_Handler
                     $taxonomy_data[$remapped[0]][] = $remapped[1];
                     if ($remapped[0] === 'people_type') {
                         $has_people_type = true;
+                    } else if ($remapped[0] === 'news_type') {
+                        $has_news_type = true;
                     } else if (stripos($term->name, 'Courses') !== false) {
                         $is_course = true;
                     } else if (stripos($term->name, 'Publications') !== false) {
@@ -217,14 +219,11 @@ class APT_Ajax_Handler
             }
         }
 
-        // Remove duplicates and implode values
-        foreach ($taxonomy_data as $key => $values) {
-            $taxonomy_data[$key] = implode(', ', array_unique($values));
-        }
-
         // Set post_type based on taxonomy
         if (@$has_people_type) {
             $post_type = 'people';
+        } elseif (@$has_news_type) {
+            $post_type = 'news';
         } elseif (@$is_course) {
             $post_type = 'course';
         } elseif (@$is_publication) {
@@ -251,7 +250,9 @@ class APT_Ajax_Handler
                 && substr($key, 0, 4) !== 'sbg_'
                 && substr($key, 0, 5) !== 'pyre_'
                 && substr($key, 0, 6) !== 'avada_'
+                && substr($key, 0, 6) !== 'slide_'
                 && substr($key, 0, 7) !== 'fusion_'
+                && substr($key, 0, 8) !== 'display_'
             ) {
                 $new_key = self::remap_custom_field_key($key);
                 if ($new_key) {
@@ -274,11 +275,27 @@ class APT_Ajax_Handler
                 'Adjunct' => 'Adjunct',
                 'Advisory Board' => 'Advisory Board',
             ],
-            'pillar-cluster' => ['SUTD', 'ASD', 'EDP', 'ESD',  'ISTD', 'HASS', 'SMT', 'DAI']
+            'news_type' => [
+                'Research' => 'Research News',
+                'Research Highlights' => 'Faculty',
+            ],
+            'pillar-cluster' => [
+                'SUTD',
+                'ASD',
+                'EPD',
+                'ESD',
+                'ISTD',
+                'HASS',
+                'SMT',
+                'DAI',
+                'SCI',
+            ]
         ];
-        // Check for people_type mapping
-        if (isset($taxonomy_mapping['people_type'][$value])) {
-            return ['people_type', $taxonomy_mapping['people_type'][$value]];
+
+        foreach ($taxonomy_mapping as $taxonomy_key => $taxonomy) {
+            if (isset($taxonomy[$value])) {
+                return [$taxonomy_key, $taxonomy_mapping[$taxonomy_key][$value]];
+            }
         }
 
         // Check for pillar-cluster mapping
@@ -300,7 +317,7 @@ class APT_Ajax_Handler
             'last_name' => 'last_name',
             'email' => 'email',
             'telephone' => 'telephone',
-            'research' => 'research',
+            'research' => 'research_area',
             'research_interest' => 'research_interest',
             'research-methods' => 'research-methods',
             'research-applications' => 'research-applications',
