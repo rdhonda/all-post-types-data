@@ -318,6 +318,7 @@ class APT_Ajax_Handler
             'email' => 'email',
             'telephone' => 'telephone',
             'research' => 'research_area',
+            'specific_research_area' => 'research_area',
             'research_interest' => 'research_interest',
             'research-methods' => 'research-methods',
             'research-applications' => 'research-applications',
@@ -337,7 +338,7 @@ class APT_Ajax_Handler
         return isset($custom_field_mapping[$key]) ? $custom_field_mapping[$key] : $key;
     }
 
-    public static function format_custom_field_value($value, $field_data = [])
+    public static function format_custom_field_value($value, $prev_same_key_data = [])
     {
         if (is_array($value) && count($value) === 1) {
             $value = $value[0];
@@ -346,7 +347,9 @@ class APT_Ajax_Handler
         $unserialized_value = maybe_unserialize($value);
 
         if (is_array($unserialized_value)) {
-            // $unserialized_value = array_merge($field_data, $unserialized_value);
+            if (is_array($prev_same_key_data)) {
+                $unserialized_value = array_merge($prev_same_key_data, $unserialized_value);
+            }
             // return wp_json_encode($unserialized_value);
             return $unserialized_value;
         } else {
