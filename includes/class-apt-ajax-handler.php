@@ -112,7 +112,7 @@ class APT_Ajax_Handler
     {
         $args = array(
             'post_type' => $post_type,
-            'posts_per_page' => -1, // Get all posts
+            'posts_per_page' => 20, // Get all posts
             'post_status' => 'publish',
             'paged' => $paged
         );
@@ -230,8 +230,6 @@ class APT_Ajax_Handler
             $post_type = 'publication';
         } elseif (@$is_project) {
             $post_type = 'project';
-        } else {
-            $post_type = 'page';
         }
 
         return wp_json_encode(array_merge(['post_type' => $post_type], $taxonomy_data));
@@ -245,6 +243,8 @@ class APT_Ajax_Handler
         foreach ($custom_fields as $key => $values) {
             if (
                 reset($values)
+                && $key !== 'horizontal_alignment'
+                && $key !== 'vertical_alignment'
                 && substr($key, 0, 1) !== '_'
                 && substr($key, 0, 3) !== 'kd_'
                 && substr($key, 0, 4) !== 'sbg_'
@@ -277,7 +277,7 @@ class APT_Ajax_Handler
             ],
             'news_type' => [
                 'Research' => 'Research News',
-                'Research Highlights' => 'Faculty',
+                'Research Highlights' => 'Research Highlights',
             ],
             'pillar-cluster' => [
                 'SUTD',
@@ -300,7 +300,8 @@ class APT_Ajax_Handler
 
         // Check for pillar-cluster mapping
         foreach ($taxonomy_mapping['pillar-cluster'] as $pillar) {
-            if (stripos($value, $pillar) !== false) {
+            $value_array = explode(' ', $value);
+            if ($value_array[count($value_array) - 1] == $pillar) {
                 return ['pillar-cluster', $pillar];
             }
         }
@@ -318,7 +319,7 @@ class APT_Ajax_Handler
             'email' => 'email',
             'telephone' => 'telephone',
             'research' => 'research_area',
-            'specific_research_area' => 'research_area',
+            'specific_research_area' => 'specific_research_area',
             'research_interest' => 'research_interest',
             'research-methods' => 'research-methods',
             'research-applications' => 'research-applications',

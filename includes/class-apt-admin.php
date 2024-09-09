@@ -5,6 +5,7 @@ class APT_Admin
     {
         add_action('admin_menu', array($this, 'add_menu_item'));
         add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_scripts'));
+        add_action('init', array($this, 'reregister_post_types'), 99);
     }
 
     public function add_menu_item()
@@ -32,6 +33,34 @@ class APT_Admin
             'ajax_url' => admin_url('admin-ajax.php'),
             'nonce' => wp_create_nonce('apt_nonce')
         ));
+    }
+
+    public function reregister_post_types()
+    {
+        global $wpdb;
+
+        // Get all registered post types
+        $registered_post_types = get_post_types(array(), 'names');
+
+        // Get all post types from the database
+        $all_post_types = $wpdb->get_col("SELECT DISTINCT post_type FROM {$wpdb->posts}");
+
+        // Identify unregistered post types
+        $unregistered_post_types = array_diff($all_post_types, $registered_post_types);
+
+        // Re-register unregistered post types
+        foreach ($unregistered_post_types as $post_type) {
+            if (!post_type_exists($post_type)) {
+                $args = array(
+                    'public' => true,
+                    'label' => ucfirst(str_replace('_', ' ', $post_type)),
+                    'show_ui' => true,
+                    'show_in_menu' => true, // Hide from admin menu
+                    'supports' => array('title', 'editor', 'author', 'thumbnail', 'excerpt', 'custom-fields'),
+                );
+                register_post_type($post_type, $args);
+            }
+        }
     }
 
 
@@ -208,7 +237,7 @@ class APT_Admin
         $total_pages = ceil($total_posts / $posts_per_page);
 
         echo '<table class="widefat">';
-        echo '<thead><tr><th>Featured Image</th><th>ID</th><th>Title</th><th>Permalink</th><th>Taxonomies</th><th>Custom Fields</th><th>Status</th><th>Date</th></tr></thead>';
+        echo '<thead><tr><th>Featured Image</th><th>Title</th><th>Permalink</th><th>Post Type</th><th>Taxonomies</th><th>Custom Fields</th><th>Date</th></tr></thead>';
         echo '<tbody>';
         if ($query->have_posts()) {
             while ($query->have_posts()) {
@@ -241,33 +270,42 @@ class APT_Admin
     }
     private function display_post_row($post, $post_type, $level = 0)
     {
+        $adjusted_post_type = $this->get_adjusted_post_type($post->ID, $post->post_type);
         $indent = str_repeat('— ', $level);
         echo '<tr>';
         echo '<td>' . $this->get_featured_image($post->ID) . '</td>';
-        echo '<td>' . esc_html($post->ID) . '</td>';
         echo '<td>' . $indent . '<a href="#" class="toggle-content" data-post-id="' . esc_attr($post->ID) . '" data-blog-id="' . get_current_blog_id() . '">' . esc_html($post->post_title) . '</a></td>';
         echo '<td><a href="' . esc_url(get_permalink($post->ID)) . '" target="_blank">View</a></td>';
+        echo '<td>' . esc_html($adjusted_post_type) . '</td>';
         echo '<td>' . $this->get_post_taxonomies($post->ID, $post_type) . '</td>';
         echo '<td>' . $this->get_post_custom_fields($post->ID) . '</td>';
-        echo '<td>' . esc_html($post->post_status) . '</td>';
         echo '<td>' . esc_html($post->post_date) . '</td>';
         echo '</tr>';
         echo '<tr class="content-row" id="content-' . esc_attr($post->ID) . '" style="display:none;"><td colspan="7"></td></tr>';
     }
 
 
+    private function get_adjusted_post_type($post_id, $post_type)
+    {
+        $taxonomies = APT_Ajax_Handler::get_post_taxonomies_json($post_id, $post_type);
+        $taxonomies_array = json_decode($taxonomies, true);
+
+        return $taxonomies_array['post_type'];
+    }
+
     private function get_post_taxonomies($post_id, $post_type)
     {
         $taxonomies = APT_Ajax_Handler::get_post_taxonomies_json($post_id, $post_type);
-        $taxonomies = json_decode($taxonomies, true);
-        return $this->display_listing($taxonomies);
+        $taxonomies_array = json_decode($taxonomies, true);
+        unset($taxonomies_array['post_type']);
+        return $this->display_listing($taxonomies_array);
     }
 
     private function get_post_custom_fields($post_id)
     {
         $custom_fields = APT_Ajax_Handler::get_post_custom_fields_json($post_id);
-        $custom_fields = json_decode($custom_fields, true);
-        return $this->display_listing($custom_fields);
+        $custom_fields_array = json_decode($custom_fields, true);
+        return $this->display_listing($custom_fields_array);
     }
 
     private function display_listing($data)
@@ -298,6 +336,6 @@ class APT_Admin
                 return '<img src="' . esc_url($image[0]) . '" width="50" height="50" alt="Featured Image" />';
             }
         }
-        return '—';
+        return 'No image';
     }
 }
